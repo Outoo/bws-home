@@ -428,8 +428,28 @@ window.PROGRAM = {"workouts": {"A": {"nameAr": "التمرين A", "focus": "ج�
 
   const GOAL_ADJ = { cut: -0.2, recomp: -0.1, maintain: 0, bulk: 0.1 };
   // Estimated daily targets (Mifflin-St Jeor). Protein 2 g/kg. Returns null when inputs are incomplete.
+  // ---- Pocket Coach method (from the coach's own workbook) ----
+  // Maintenance: (370 + 21.6 x lean mass kg) x 1.5 (male) / 1.55 (female).
+  function pcTdee(o) { const w = +o.w, bf = +o.bf; if (!(w > 0 && bf > 0 && bf < 70)) return null; return Math.round((370 + 21.6 * w * (100 - bf) / 100) * (o.sex === 'f' ? 1.55 : 1.5)); }
+  // Protein (g) by body weight and body fat: minimum = recommended, with the coach's range.
+  function pcProtein(o) {
+    const w = +o.w, bf = +o.bf || 0; let rec, lo, hi;
+    if (o.sex === 'f') { rec = 1.7778; lo = 1.7778; hi = 2.6667; }
+    else if (bf < 20) { rec = 2.2; lo = 1.76; hi = 2.64; } else if (bf <= 25) { rec = 1.76; lo = 1.606; hi = 2.2; } else { rec = 1.606; lo = 1.606; hi = 2.2; }
+    return { rec: Math.round(w * rec), min: Math.round(w * lo), max: Math.round(w * hi) };
+  }
+  // Fat share of calories: male 22% (25% if body fat >= 25), female 30%; carbs fill the rest.
+  function pcMacros(kcal, o, protein) {
+    const bf = +o.bf || 0, share = o.sex === 'f' ? 0.30 : (bf >= 25 ? 0.25 : 0.22), fat = share * kcal / 9, carbs = (kcal - protein * 4 - fat * 9) / 4;
+    const lo = o.sex === 'f' ? 0.20 : 0.15, hi = o.sex === 'f' ? 0.40 : 0.30;
+    return { fat: Math.round(fat), carbs: Math.max(0, Math.round(carbs)), fatRange: [Math.round(lo * kcal / 9 / 10) * 10, Math.round(hi * kcal / 9 / 10) * 10], carbRange: [Math.round(carbs * 0.8 / 10) * 10, Math.round(carbs * 1.2 / 10) * 10] };
+  }
   function calcTargets(o) {
-    const w = +o.w, h = +o.h, a = +o.age;
+    const w = +o.w, h = +o.h, a = +o.age, floor = o.sex === 'f' ? 1200 : 1500;
+    if (+o.bf > 0 && w > 25) {
+      const tdee = pcTdee(o), rate = goalRatePct(o.goal, +o.bf, o.sex), kcal = o.goal === 'maintain' ? tdee : Math.max(floor, Math.round((tdee + rate / 100 * w * 7700 / 7) / 10) * 10), p = pcProtein(o), m = pcMacros(kcal, o, p.rec);
+      return { method: 'pc', tdee, rate, kcal, protein: p.rec, proteinMin: p.min, proteinMax: p.max, fat: m.fat, carbs: m.carbs };
+    }
     if (!(w > 25 && h > 100 && a > 10)) return null;
     const bmr = Math.round(10 * w + 6.25 * h - 5 * a + (o.sex === 'f' ? -161 : 5)), tdee = Math.round(bmr * (+o.act || 1.375));
     const kcal = Math.round(tdee * (1 + (GOAL_ADJ[o.goal] != null ? GOAL_ADJ[o.goal] : 0)) / 10) * 10;
@@ -465,19 +485,31 @@ window.PROGRAM = {"workouts": {"A": {"nameAr": "التمرين A", "focus": "ج�
     return Object.keys(g).map(Number).sort((a, b) => a - b).map(w => ({ week: w, avg: Math.round(g[w].reduce((x, y) => x + y, 0) / g[w].length), days: g[w].length }));
   }
   // Target weekly weight change as % of body weight (negative = loss).
-  function goalRatePct(goal, bf) {
-    if (goal === 'maintain') return 0; if (goal === 'bulk') return 0.25; if (goal === 'recomp') return -0.3;
-    const f = bf == null ? 0.5 : Math.max(0, Math.min(1, (bf - 15) / 15)); return -Math.round((0.5 + 0.5 * f) * 100) / 100;
+  function goalRatePct(goal, bf, sex) {
+    if (goal === 'maintain') return 0; if (goal === 'bulk') return 0.375; if (goal === 'recomp') return -0.3;
+    if (bf == null || !(bf > 0)) return -0.5;
+    if (sex === 'f') return bf > 25 ? -0.7 : bf > 22 ? -0.5 : -0.3;
+    return bf > 15 ? -0.7 : bf > 12 ? -0.5 : -0.3;
+  }
+  // Weekly measured TDEE (coach method): avg kcal - (change in weekly avg weight x 7716 / days logged).
+  function weeklyTdee(weekly, kcalWeeks, startW) {
+    const wm = {}; (weekly || []).forEach(x => { if (x.n >= 3) wm[x.week] = x.avg; }); const out = [];
+    (kcalWeeks || []).forEach(k => {
+      if (k.days < 4 || wm[k.week] == null) return;
+      const prev = wm[k.week - 1] != null ? wm[k.week - 1] : (k.week === 1 ? +startW : null); if (!(prev > 0)) return;
+      const d = wm[k.week] - prev; out.push({ week: k.week, tdee: Math.round(k.avg - d * 7716 / k.days), change: Math.round(d * 100) / 100, avg: k.avg });
+    });
+    return out;
   }
   // Compares measured weekly weight trend with the goal and nudges the calorie target (max 200 kcal per step).
   function coachAdvice(o) {
-    const cw = o.currentWeek, done = (o.weekly || []).filter(x => x.week < cw && x.n >= 3).slice(-3), kc = (o.kcalWeeks || []).filter(x => x.week < cw && x.days >= 4).slice(-3);
-    if (done.length < 3 || kc.length < 3) return null;
-    const actual = (done[2].avg - done[0].avg) / (done[2].week - done[0].week), avgKcal = Math.round(kc.reduce((a, x) => a + x.avg, 0) / kc.length);
-    const goal = done[2].avg * (o.goalPct || 0) / 100, maint = Math.round(avgKcal - actual * 7700 / 7);
-    let sug = Math.round((maint + goal * 7700 / 7) / 10) * 10; const cur = o.currentKcal || sug;
-    sug = Math.max(o.floor || 1200, Math.max(cur - 200, Math.min(cur + 200, sug)));
-    return { actualKgPerWeek: Math.round(actual * 100) / 100, goalKgPerWeek: Math.round(goal * 100) / 100, avgKcal, maint, suggested: sug, delta: sug - cur };
+    const cw = o.currentWeek, td = weeklyTdee(o.weekly, o.kcalWeeks, o.startW).filter(x => x.week < cw);
+    if (td.length < 3) return null;
+    const last = td[td.length - 1], wk = (o.weekly || []).filter(x => x.week < cw && x.n >= 3), lw = wk[wk.length - 1];
+    if (!lw) return null;
+    const goal = lw.avg * (o.goalPct || 0) / 100;
+    let sug = Math.max(o.floor || 1200, Math.round((last.tdee + goal * 7700 / 7) / 10) * 10); const cur = o.currentKcal || sug;
+    return { actualKgPerWeek: last.change, goalKgPerWeek: Math.round(goal * 100) / 100, avgKcal: Math.round(last.avg), maint: last.tdee, suggested: sug, delta: sug - cur, tdees: td, noisy: Math.abs(sug - cur) > 300 };
   }
 
 
@@ -510,7 +542,7 @@ window.PROGRAM = {"workouts": {"A": {"nameAr": "التمرين A", "focus": "ج�
     const avg3 = Math.round(vals.reduce((a, b) => a + b, 0) / vals.length), next = Math.min(12000, Math.max(Math.ceil((avg3 + 1000) / 500) * 500, 0));
     return { avg3, next: avg3 >= 8000 ? Math.min(12000, Math.max(8000, next)) : next };
   }
-  const api = { strengthTargets, stepPlan, weekActivity, hitDays, weeklyAvg, kcalWeeks, goalRatePct, coachAdvice, navyBF, calcTargets, sumMeals, activeDates, streak, strengthPct, muscleProgress, muscleGroupOf, muscleSplit, dailyCount, parseNum, weekOf, todayISO, addDays, platesFor, e1rm, historyFor, lastPerf, detectPRs, stalled, sessionTotals, csvRows, topSet, doneSets };
+  const api = { strengthTargets, stepPlan, weekActivity, hitDays, weeklyAvg, kcalWeeks, goalRatePct, coachAdvice, navyBF, calcTargets, sumMeals, activeDates, streak, pcTdee, pcProtein, pcMacros, weeklyTdee, strengthPct, muscleProgress, muscleGroupOf, muscleSplit, dailyCount, parseNum, weekOf, todayISO, addDays, platesFor, e1rm, historyFor, lastPerf, detectPRs, stalled, sessionTotals, csvRows, topSet, doneSets };
   if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.BWSLogic = api;
 })(typeof window !== 'undefined' ? window : globalThis);
 
@@ -965,9 +997,14 @@ window.PROGRAM = {"workouts": {"A": {"nameAr": "التمرين A", "focus": "ج�
       '<button class="btn block" style="margin-top:12px" data-act="cardio-save">حفظ</button>');
   }
 
+  function curBF() {
+    const st = S.settings, nu = st.nutri, lm = st.measures[st.measures.length - 1];
+    const nb = lm && lm.waist && lm.neck && nu.h && nu.sex !== 'f' ? L.navyBF({ waist: lm.waist, neck: lm.neck, h: nu.h }) : null;
+    return nb != null ? nb : (+nu.bf > 0 ? +nu.bf : null);
+  }
   function phaseCard() {
     const st = S.settings, nu = st.nutri, today = L.todayISO(), cw = L.weekOf(st.start || today, today), lm = st.measures[st.measures.length - 1];
-    const bf = lm && lm.waist && lm.neck && nu.h && nu.sex !== 'f' ? L.navyBF({ waist: lm.waist, neck: lm.neck, h: nu.h }) : null;
+    const bf = curBF();
     const names = { cut: 'تنشيف', recomp: 'بناء عضل وحرق دهون', maintain: 'ثبات', bulk: 'بناء' };
     let c = '<div class="card"><h2 style="font-size:17px">🧭 مرحلتك الحالية: ' + (names[nu.goal] || '—') + '</h2>';
     c += '<p class="small muted" style="margin:0 0 8px">أنت في أسبوع ' + cw + ' من برنامج 12 أسبوعاً. ' + (bf ? 'تقدير دهونك الآن ~' + bf + '%.' : 'قِس الخصر والعنق في صفحة التقدم لتقدير نسبة دهونك.') + '</p>';
@@ -985,15 +1022,15 @@ window.PROGRAM = {"workouts": {"A": {"nameAr": "التمرين A", "focus": "ج�
   function coachCard() {
     const st = S.settings, nu = st.nutri; if (!nu.start) return '';
     const cw = L.weekOf(nu.start, L.todayISO()), wk = L.weeklyAvg(st.bodyweights, nu.start), kw = L.kcalWeeks(st.meals, nu.start);
-    const lm = st.measures[st.measures.length - 1], bf = lm && lm.waist && lm.neck && nu.h && nu.sex !== 'f' ? L.navyBF({ waist: lm.waist, neck: lm.neck, h: nu.h }) : null;
-    const gp = L.goalRatePct(nu.goal, bf), adv = L.coachAdvice({ weekly: wk, kcalWeeks: kw, goalPct: gp, currentKcal: nu.kcal, currentWeek: cw, floor: nu.sex === 'f' ? 1200 : 1500 });
+    const bf = curBF();
+    const gp = L.goalRatePct(nu.goal, bf, nu.sex), adv = L.coachAdvice({ weekly: wk, kcalWeeks: kw, goalPct: gp, currentKcal: nu.kcal, currentWeek: cw, floor: nu.sex === 'f' ? 1200 : 1500, startW: nu.w });
     const doneWeeks = Math.min(3, wk.filter(x => x.week < cw && x.n >= 3).length);
     let c = '<div class="card"><h2 style="font-size:17px">🧠 المدرب الذكي (أسبوع ' + cw + ')</h2>';
     c += '<p class="small muted" style="margin:0 0 8px">الهدف: ' + (gp === 0 ? 'ثبات الوزن' : (gp < 0 ? 'نزول' : 'زيادة') + ' ~' + Math.abs(gp) + '% من وزنك أسبوعياً') + '. سجّل وزنك كل صباح (بعد الحمّام وقبل الأكل) وسعراتك كل يوم، ويُحسب المتوسط الأسبوعي لأن الوزن اليومي يتذبذب.</p>';
-    if (!adv) c += '<div class="small">يحتاج المدرب بيانات 3 أسابيع كاملة (3 أيام وزن على الأقل و4 أيام سعرات في الأسبوع). أنجزت <b>' + doneWeeks + '/3</b>. التزم بهدفك الحالي حتى ذلك الحين.</div>';
+    if (!adv) c += '<div class="small">يبدأ التعديل في بداية الأسبوع 4: يحتاج 3 أسابيع كاملة (3 أيام وزن على الأقل و4 أيام سعرات في الأسبوع). أنجزت <b>' + doneWeeks + '/3</b>. التزم بهدفك الحالي حتى ذلك الحين.</div>';
     else {
       c += '<div class="rep" style="grid-template-columns:repeat(3,1fr)"><div><b style="direction:ltr">' + (adv.actualKgPerWeek > 0 ? '+' : '') + adv.actualKgPerWeek + '</b><span>كجم/أسبوع فعلياً</span></div><div><b style="direction:ltr">' + (adv.goalKgPerWeek > 0 ? '+' : '') + adv.goalKgPerWeek + '</b><span>الهدف</span></div><div><b>' + adv.suggested + '</b><span>سعرات مقترحة</span></div></div>' +
-        '<p class="small" style="margin:8px 0">متوسط سعراتك ' + adv.avgKcal + ' وصيانتك التقديرية من بياناتك ~' + adv.maint + '. ' + (adv.delta === 0 ? 'أنت على المسار الصحيح، أبقِ هدفك.' : (adv.delta < 0 ? 'يُقترح خفض ' : 'يُقترح رفع ') + Math.abs(adv.delta) + ' سعرة.') + '</p>' +
+        '<p class="small" style="margin:8px 0">متوسط سعراتك في آخر أسبوع كامل ' + adv.avgKcal + ' وصيانتك المقاسة ~' + adv.maint + ' (= السعرات − تغير الوزن × 7716 ÷ الأيام). ' + (adv.noisy ? '<b>التغيير كبير: تأكد من دقة تسجيلك قبل التطبيق.</b> ' : '') + (adv.delta === 0 ? 'أنت على المسار الصحيح، أبقِ هدفك.' : (adv.delta < 0 ? 'يُقترح خفض ' : 'يُقترح رفع ') + Math.abs(adv.delta) + ' سعرة.') + '</p>' +
         (adv.delta !== 0 ? '<button class="btn block" data-act="coach-apply" data-k="' + adv.suggested + '">طبّق الهدف الجديد (' + adv.suggested + ')</button>' : '');
     }
     const hd = L.hitDays(st.meals, nu.kcal, nu.protein, L.todayISO()), lvl = hd >= 6 ? 'المستوى 4: ثبّت 6-7 أيام' : hd >= 4 ? 'المستوى 3: ارفع إلى 6-7 أيام' : hd >= 2 ? 'المستوى 2: ارفع إلى 4-5 أيام' : 'المستوى 1: ابدأ بـ 2-3 أيام';
@@ -1012,9 +1049,10 @@ window.PROGRAM = {"workouts": {"A": {"nameAr": "التمرين A", "focus": "ج�
     const lastW = st.bodyweights.length ? st.bodyweights[st.bodyweights.length - 1].kg : '';
     let h = '<h1>التغذية</h1>';
     if (!nu.kcal || UI.nSetup) {
-      h += '<p class="sub">أدخل بياناتك لنحسب هدفك اليومي. الأرقام تقديرية (معادلة Mifflin-St Jeor)، عدّلها حسب نتائجك.</p><div class="card">' +
+      h += '<p class="sub">أدخل بياناتك لنحسب هدفك اليومي بطريقة Pocket Coach (تعتمد على الوزن ونسبة الدهون). الأرقام تقديرية ثم يضبطها المدرب أسبوعياً من نتائجك.</p><div class="card">' +
         '<div class="seg"><button class="' + (nu.sex !== 'f' ? 'on' : '') + '" data-act="n-sex" data-v="m">ذكر</button><button class="' + (nu.sex === 'f' ? 'on' : '') + '" data-act="n-sex" data-v="f">أنثى</button></div>' +
         '<div class="row" style="gap:8px;margin-top:10px"><label class="sp small">العمر<input id="nAge" class="field num" inputmode="numeric" value="' + esc(nu.age) + '"></label><label class="sp small">الطول (سم)<input id="nH" class="field num" inputmode="numeric" value="' + esc(nu.h) + '"></label><label class="sp small">الوزن (كجم)<input id="nW" class="field num" inputmode="decimal" value="' + esc(lastW || nu.w) + '"></label></div>' +
+        '<label class="small" style="display:block;margin-top:10px">نسبة الدهون % (تقدير، اتركها فارغة لو لا تعرفها)<input id="nBF" class="field num" inputmode="decimal" value="' + esc(nu.bf || curBF() || '') + '"></label>' +
         '<label class="small" style="display:block;margin-top:10px">مستوى النشاط<select id="nAct" class="field">' + ACTS.map(a => '<option value="' + a[0] + '"' + (+nu.act === a[0] ? ' selected' : '') + '>' + a[1] + '</option>').join('') + '</select></label>' +
         '<div class="small" style="margin:10px 0 4px">هدفك</div><div class="seg wrap">' + Object.keys(GOALS).map(k => '<button class="' + (nu.goal === k ? 'on' : '') + '" data-act="n-goal" data-v="' + k + '">' + GOALS[k][0] + '<br><span class="small muted">' + GOALS[k][1] + '</span></button>').join('') + '</div>' +
         '<button class="btn block" style="margin-top:14px" data-act="n-calc">احسب هدفي</button></div>';
@@ -1028,6 +1066,7 @@ window.PROGRAM = {"workouts": {"A": {"nameAr": "التمرين A", "focus": "ج�
       '<div class="row small"><span>بروتين</span><div class="progress sp" style="margin:0 8px"><i style="width:' + ppct + '%;background:var(--green)"></i></div><b style="direction:ltr">' + sum.p + ' / ' + nu.protein + ' جم</b></div>' +
       '<div class="row" style="margin-top:10px"><span class="muted small sp">' + GOALS[nu.goal][0] + ' · صيانة ~' + (nu.calc ? nu.calc.tdee : '--') + ' سعرة</span><button class="btn ghost sm" data-act="n-edit">' + (UI.nEdit ? 'إغلاق' : 'تعديل الهدف') + '</button><button class="btn ghost sm" data-act="n-setup">إعادة الحساب</button></div>' +
       (UI.nEdit ? '<div class="row" style="gap:8px;margin-top:8px"><label class="sp small">سعرات<input id="eK" class="field num" inputmode="numeric" value="' + nu.kcal + '"></label><label class="sp small">بروتين (جم)<input id="eP" class="field num" inputmode="numeric" value="' + nu.protein + '"></label><button class="btn sm" data-act="n-save-target" style="align-self:end">حفظ</button></div>' : '') + '</div>';
+    { const mb = curBF() || +nu.bf || 0; if (mb > 0 && nu.kcal && nu.protein) { const mc = L.pcMacros(nu.kcal, { sex: nu.sex, bf: mb }, nu.protein); h += '<div class="card"><h2 style="font-size:17px">ماكروز اليوم (طريقة المدرب)</h2><div class="rep" style="grid-template-columns:repeat(3,1fr)"><div><b>' + nu.protein + '</b><span>بروتين (حد أدنى) جم</span></div><div><b>' + mc.fat + '</b><span>دهون جم · ' + mc.fatRange[0] + '-' + mc.fatRange[1] + '</span></div><div><b>' + mc.carbs + '</b><span>كارب جم · ' + mc.carbRange[0] + '-' + mc.carbRange[1] + '</span></div></div><p class="small muted" style="margin:8px 0 0">المدى المقبول للسعرات ±100. لا تأكل سعرات التمرين.</p></div>'; } }
     h += phaseCard();
     h += coachCard();
     h += '<div class="card"><h2 style="font-size:17px">أضف وجبة</h2>' +
@@ -1302,9 +1341,9 @@ window.PROGRAM = {"workouts": {"A": {"nameAr": "التمرين A", "focus": "ج�
       case 'n-edit': UI.nEdit = !UI.nEdit; render(true); break;
       case 'n-calc': {
         const nu = S.settings.nutri, g = id => document.getElementById(id).value;
-        nu.age = L.parseNum(g('nAge')); nu.h = L.parseNum(g('nH')); nu.w = L.parseNum(g('nW')); nu.act = +g('nAct');
-        const r = L.calcTargets({ sex: nu.sex, age: nu.age, h: nu.h, w: nu.w, act: nu.act, goal: nu.goal });
-        if (!r) { toast('أدخل العمر والطول والوزن بشكل صحيح'); return; }
+        nu.age = L.parseNum(g('nAge')); nu.h = L.parseNum(g('nH')); nu.w = L.parseNum(g('nW')); nu.act = +g('nAct'); nu.bf = L.parseNum(g('nBF')) || 0;
+        const r = L.calcTargets({ sex: nu.sex, age: nu.age, h: nu.h, w: nu.w, act: nu.act, goal: nu.goal, bf: nu.bf });
+        if (!r) { toast('أدخل الوزن ونسبة الدهون، أو العمر والطول والوزن'); return; }
         nu.calc = r; nu.kcal = r.kcal; nu.protein = r.protein; if (!nu.start) nu.start = L.todayISO(); UI.nSetup = false; Store.saveSettings(); toast('تم حساب هدفك'); render(true); break;
       }
       case 'n-save-target': {
