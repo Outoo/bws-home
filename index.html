@@ -515,20 +515,22 @@ window.PROGRAM = {"workouts": {"A": {"nameAr": "التمرين A", "focus": "ج�
 
   // Course "beginner strength targets": multipliers derived from the course's 160 lb example (5-rep tests; pull-ups = 8 reps).
   const LIFTS = [
-    { id: 'bench', ar: 'ضغط البنش بالبار', mult: 1.0, test: n => /bench press/i.test(n) && !/close|incline|decline|dumbbell/i.test(n) },
+    { id: 'bench', ar: 'ضغط الصدر (بنش بالبار أو دامبل)', mult: 1.0, test: n => /bench press/i.test(n) && !/close|incline|decline|dumbbell/i.test(n), alts: [{ mult: 0.5, test: n => /flat dumbbell press/i.test(n) }] },
     { id: 'incdb', ar: 'ضغط مائل بالدامبل (لكل دامبل)', mult: 0.44, test: n => /incline dumbbell press/i.test(n) },
     { id: 'ohp', ar: 'ضغط الكتف واقفاً بالبار', mult: 0.6, test: n => /overhead press/i.test(n) && /barbell/i.test(n) },
     { id: 'pull', ar: 'عقلة بوزن الجسم (تكرارات)', reps: 8, test: n => /pull-?ups?/i.test(n) && !/assisted|lat/i.test(n) },
     { id: 'dead', ar: 'ديدلفت بالبار', mult: 1.4, test: n => /deadlift/i.test(n) && !/romanian|stiff|straight/i.test(n) },
-    { id: 'squat', ar: 'سكوات بالبار', mult: 1.25, test: n => /squat/i.test(n) && /barbell|back/i.test(n) && !/goblet|sissy|split|front foot/i.test(n) }
+    { id: 'squat', ar: 'سكوات (بالبار أو كأسي)', mult: 1.25, test: n => /squat/i.test(n) && /barbell|back/i.test(n) && !/goblet|sissy|split|front foot/i.test(n), alts: [{ mult: 0.5, test: n => /goblet squat/i.test(n) }] }
   ];
   function strengthTargets(sessions, bwKg) {
     const bw = +bwKg || 0;
     return LIFTS.map(lf => {
       let bestE = 0, bestR = 0;
       Object.values(sessions || {}).forEach(se => Object.values(se.sets || {}).forEach(slot => {
-        if (!lf.test(slot.name || '')) return;
-        doneSets(slot).forEach(s => { if (lf.reps) bestR = Math.max(bestR, s.r || 0); else bestE = Math.max(bestE, e1rm(s.w || 0, s.r || 0)); });
+        const nm = slot.name || '', alt = (lf.alts || []).find(a => a.test(nm));
+        if (!lf.test(nm) && !alt) return;
+        const k = alt ? lf.mult / alt.mult : 1; // dumbbell / goblet lifts are scaled to the barbell-equivalent target
+        doneSets(slot).forEach(s => { if (lf.reps) bestR = Math.max(bestR, s.r || 0); else bestE = Math.max(bestE, e1rm(s.w || 0, s.r || 0) * k); });
       }));
       if (lf.reps) return { id: lf.id, ar: lf.ar, target: lf.reps, unit: 'تكرار', best: bestR, pct: Math.min(100, Math.round(bestR / lf.reps * 100)) };
       const target = bw ? Math.round(bw * lf.mult * 2) / 2 : 0, tE = target * (1 + 5 / 30), bestKg5 = bestE ? Math.round(bestE / (1 + 5 / 30) * 2) / 2 : 0;
@@ -542,7 +544,14 @@ window.PROGRAM = {"workouts": {"A": {"nameAr": "التمرين A", "focus": "ج�
     const avg3 = Math.round(vals.reduce((a, b) => a + b, 0) / vals.length), next = Math.min(12000, Math.max(Math.ceil((avg3 + 1000) / 500) * 500, 0));
     return { avg3, next: avg3 >= 8000 ? Math.min(12000, Math.max(8000, next)) : next };
   }
-  const api = { strengthTargets, stepPlan, weekActivity, hitDays, weeklyAvg, kcalWeeks, goalRatePct, coachAdvice, navyBF, calcTargets, sumMeals, activeDates, streak, pcTdee, pcProtein, pcMacros, weeklyTdee, strengthPct, muscleProgress, muscleGroupOf, muscleSplit, dailyCount, parseNum, weekOf, todayISO, addDays, platesFor, e1rm, historyFor, lastPerf, detectPRs, stalled, sessionTotals, csvRows, topSet, doneSets };
+  // One program week at a glance: finished workouts, total volume, average weight and average kcal (days with meals only).
+  function weekSummary(sessions, bodyweights, meals, startISO, week) {
+    let done = 0, volume = 0;
+    Object.values(sessions || {}).forEach(s => { if (s.week !== week) return; if (s.done) done++; volume += sessionTotals(s).volume; });
+    const w = weeklyAvg(bodyweights, startISO).find(x => x.week === week), k = kcalWeeks(meals, startISO).find(x => x.week === week);
+    return { week, done, volume: Math.round(volume), avgW: w ? w.avg : null, wN: w ? w.n : 0, avgKcal: k ? k.avg : null, kDays: k ? k.days : 0 };
+  }
+  const api = { weekSummary, strengthTargets, stepPlan, weekActivity, hitDays, weeklyAvg, kcalWeeks, goalRatePct, coachAdvice, navyBF, calcTargets, sumMeals, activeDates, streak, pcTdee, pcProtein, pcMacros, weeklyTdee, strengthPct, muscleProgress, muscleGroupOf, muscleSplit, dailyCount, parseNum, weekOf, todayISO, addDays, platesFor, e1rm, historyFor, lastPerf, detectPRs, stalled, sessionTotals, csvRows, topSet, doneSets };
   if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.BWSLogic = api;
 })(typeof window !== 'undefined' ? window : globalThis);
 
@@ -950,6 +959,23 @@ window.PROGRAM = {"workouts": {"A": {"nameAr": "التمرين A", "focus": "ج�
     }).join('');
     return '<div class="card"><h2 style="font-size:17px">تطور العضلات</h2><p class="small muted" style="margin:0 0 6px">متوسط تحسن قوتك (أقصى تكرار تقديري) من أول جلسة لآخر جلسة لكل مجموعة عضلية.</p>' + rows + (any ? '' : '<div class="small muted">تظهر النسب بعد جلستين مسجلتين على الأقل لنفس التمرين.</div>') + '</div>';
   }
+  function reviewCard() {
+    const st = S.settings, cw = currentWeek(); if (!st.start || cw < 1) return '';
+    const cur = L.weekSummary(S.sessions, st.bodyweights, st.meals, st.start, cw), prev = cw > 1 ? L.weekSummary(S.sessions, st.bodyweights, st.meals, st.start, cw - 1) : null;
+    if (!cur.done && !cur.avgW && !cur.avgKcal && !(prev && (prev.done || prev.avgW || prev.avgKcal))) return '';
+    const dl = (a, b, u, dig) => (a == null || b == null) ? '' : ' <span class="muted small">(' + (a - b >= 0 ? '+' : '−') + Math.abs(a - b).toFixed(dig || 0) + ' ' + u + ' عن الأسبوع الماضي)</span>';
+    const row = (t, v, extra) => '<div class="row small" style="margin:5px 0"><span>' + t + '</span><div class="sp"></div><b>' + v + '</b>' + (extra || '') + '</div>';
+    const tgt = st.nutri && st.nutri.kcal;
+    let tip = 'سجّل وزنك صباحاً ووجباتك يومياً ليكتمل الملخص.';
+    if (cur.done >= 3) tip = 'أنجزت تمارين الأسبوع، ممتاز. ' + (cur.avgKcal && tgt ? (cur.avgKcal > tgt + 100 ? 'متوسط سعراتك أعلى من هدفك، حاول الاقتراب منه.' : 'سعراتك ضمن الهدف تقريباً.') : '');
+    else if (cur.done) tip = 'بقي لك ' + (3 - cur.done) + ' تمارين هذا الأسبوع.';
+    return '<div class="card"><h2 style="font-size:17px">ملخص الأسبوع ' + cw + '</h2>' +
+      row('تمارين مكتملة', cur.done + ' / 3', '') +
+      row('حجم التمرين (كجم)', cur.volume.toLocaleString('en'), prev && prev.volume ? '' : '') + (prev && prev.volume ? '<div class="muted small" style="margin:-2px 0 4px">' + (cur.volume - prev.volume >= 0 ? '+' : '−') + Math.abs(Math.round((cur.volume - prev.volume) / prev.volume * 100)) + '% عن الأسبوع الماضي</div>' : '') +
+      row('متوسط الوزن', cur.avgW != null ? cur.avgW + ' كجم' : '—', '') + (cur.avgW != null && prev && prev.avgW != null ? '<div class="muted small" style="margin:-2px 0 4px">' + (cur.avgW - prev.avgW >= 0 ? '+' : '−') + Math.abs(cur.avgW - prev.avgW).toFixed(2) + ' كجم عن الأسبوع الماضي</div>' : '') +
+      row('متوسط السعرات', cur.avgKcal != null ? cur.avgKcal + (tgt ? ' / ' + tgt : '') : '—', cur.kDays ? '<span class="muted small" style="margin-inline-start:6px">(' + cur.kDays + ' أيام)</span>' : '') +
+      '<p class="small muted" style="margin:8px 0 0">' + tip + '</p></div>';
+  }
   function strengthCard() {
     const bwl = S.settings.bodyweights, bw = bwl.length ? bwl[bwl.length - 1].kg : +S.settings.nutri.w;
     if (!bw) return '<div class="card"><h2 style="font-size:17px">أهداف القوة</h2><p class="small muted" style="margin:0">سجّل وزن جسمك لتظهر أهدافك.</p></div>';
@@ -992,7 +1018,7 @@ window.PROGRAM = {"workouts": {"A": {"nameAr": "التمرين A", "focus": "ج�
   function overlayCardio() {
     const c = UI.cardio || (UI.cardio = { kind: 'bike', t0: null }), el = c.t0 ? Math.max(1, Math.round((Date.now() - c.t0) / 60000)) : '';
     return sheet('<h2>جلسة كارديو</h2><div class="seg wrap" style="margin-bottom:10px">' + Object.keys(CARDIO_KIND).map(k => '<button class="' + (c.kind === k ? 'on' : '') + '" data-act="cardio-kind" data-k="' + k + '">' + CARDIO_KIND[k] + '</button>').join('') + '</div>' +
-      '<div class="row"><button class="btn ghost sm" data-act="cardio-timer">' + (c.t0 ? 'إيقاف المؤقت' : '⏱ ابدأ مؤقتاً') + '</button>' + (c.t0 ? '<span class="muted small">يعمل: ' + el + ' د</span>' : '') + '</div>' +
+      '<div class="row"><button class="btn ghost sm" data-act="cardio-timer">' + (c.t0 ? 'إيقاف المؤقت' : '⏱ ابدأ مؤقتاً') + '</button>' + (c.t0 ? '<span class="muted small">يعمل: <b id="cdRun">' + el + '</b> د</span>' : '') + '</div>' +
       '<div class="row" style="margin-top:10px"><input id="cdMin" class="field num" inputmode="numeric" placeholder="المدة بالدقائق" value="' + el + '"><input id="cdHr" class="field num" inputmode="numeric" placeholder="متوسط النبض (اختياري)"></div>' +
       '<button class="btn block" style="margin-top:12px" data-act="cardio-save">حفظ</button>');
   }
@@ -1070,7 +1096,8 @@ window.PROGRAM = {"workouts": {"A": {"nameAr": "التمرين A", "focus": "ج�
     h += phaseCard();
     h += coachCard();
     h += '<div class="card"><h2 style="font-size:17px">أضف وجبة</h2>' +
-      (st.favMeals.length ? '<div class="chips" style="margin-bottom:8px">' + st.favMeals.map((f, i) => '<button class="chip blue" data-act="n-fav" data-i="' + i + '">' + esc(f.name) + ' · ' + f.kcal + '</button>').join('') + '</div>' : '') +
+      (st.favMeals.length ? '<div class="chips" style="margin-bottom:8px">' + st.favMeals.map((f, i) => '<button class="chip blue" data-act="' + (UI.favEdit ? 'n-fav-del' : 'n-fav') + '" data-i="' + i + '">' + (UI.favEdit ? '✕ ' : '') + esc(f.name) + ' · ' + f.kcal + '</button>').join('') + '</div><div class="row small" style="margin:-2px 0 8px"><button class="btn ghost sm" data-act="n-fav-edit">' + (UI.favEdit ? 'تم' : 'حذف من المفضلة') + '</button></div>' : '') +
+      (((st.meals || {})[L.addDays(UI.nDate || L.todayISO(), -1)] || []).length && !(((st.meals || {})[UI.nDate || L.todayISO()]) || []).length ? '<button class="btn ghost sm" style="margin-bottom:8px" data-act="n-copy-prev">نسخ وجبات أمس</button>' : '') +
       '<input id="mName" class="field" placeholder="اسم الوجبة (مثال: دجاج وأرز)"><div class="row" style="gap:8px;margin-top:8px"><input id="mKcal" class="field num sp" inputmode="numeric" placeholder="سعرات"><input id="mProt" class="field num sp" inputmode="decimal" placeholder="بروتين جم (اختياري)"></div>' +
       '<label class="row small" style="gap:8px;margin-top:8px"><input id="mFav" type="checkbox"> احفظها في المفضلة لإضافتها بضغطة</label><button class="btn block" style="margin-top:10px" data-act="n-add">إضافة</button></div>';
     h += '<div class="card"><h2 style="font-size:17px">وجبات اليوم (' + meals.length + ')</h2>' + (meals.length ? meals.map((m, i) => '<div class="row" style="padding:8px 0;border-top:1px solid var(--line)"><div class="sp"><b>' + esc(m.name) + '</b><div class="muted small">' + m.kcal + ' سعرة' + (m.p ? ' · ' + num(m.p) + ' جم بروتين' : '') + '</div></div><button class="icon-btn" data-act="n-del" data-i="' + i + '" aria-label="حذف">✕</button></div>').join('') : '<p class="sub" style="margin:6px 0 0">لم تسجل شيئاً بعد.</p>') + '</div>';
@@ -1180,6 +1207,7 @@ window.PROGRAM = {"workouts": {"A": {"nameAr": "التمرين A", "focus": "ج�
     const bw = bwR, bwAll = S.settings.bodyweights, avgW = {}; bw.forEach(b => { const w = L.weekOf(S.settings.start || b.date, b.date); (avgW[w] = avgW[w] || []).push(b.kg); });
     html += '<div class="card"><h2>وزن الجسم</h2><div class="row"><input id="bwIn" class="field num" inputmode="decimal" placeholder="كجم"><button class="btn" data-act="bw-add">إضافة</button></div><div class="row small" style="margin-top:8px"><span class="muted">وزني المستهدف</span><div class="sp"></div><input id="tgtW" class="field num" style="max-width:110px" inputmode="decimal" placeholder="كجم" value="' + (S.settings.targetW || '') + '"><button class="btn sm" data-act="tgt-save">حفظ</button></div>' + (S.settings.targetW && bwAll.length ? '<div class="small" style="margin-top:6px">المتبقي للهدف: <b>' + num(Math.round(Math.abs(bwAll[bwAll.length - 1].kg - S.settings.targetW) * 10) / 10) + ' كجم</b></div>' : '') +
       (bw.length ? '<div style="margin-top:10px">' + lineChart(bw.map(b => ({ x: L.weekOf(S.settings.start || b.date, b.date), y: b.kg })), '', S.settings.targetW) + '</div><div class="muted small">آخر قياس: ' + num(bwAll[bwAll.length - 1].kg) + ' كجم (' + fmtDate(bwAll[bwAll.length - 1].date) + ')</div><table class="t" style="margin-top:8px"><tr><th>الأسبوع</th><th>المتوسط</th><th>التغير</th></tr>' + Object.keys(avgW).map(Number).sort((a, b) => b - a).map((w, i, arr) => { const av = avgW[w].reduce((x, y) => x + y, 0) / avgW[w].length, pw = avgW[arr[i + 1]], pv = pw ? pw.reduce((x, y) => x + y, 0) / pw.length : null; return '<tr><td>' + w + '</td><td class="l">' + num(Math.round(av * 10) / 10) + '</td><td class="l">' + (pv == null ? '--' : (av >= pv ? '+' : '') + num(Math.round((av - pv) * 10) / 10)) + '</td></tr>'; }).join('') + '</table>' : '<p class="sub" style="margin:10px 0 0">لا قياسات في هذه الفترة.</p>') + '</div>';
+    html += reviewCard();
     html += muscleCard();
     html += strengthCard();
     html += measuresCard();
@@ -1276,6 +1304,7 @@ window.PROGRAM = {"workouts": {"A": {"nameAr": "التمرين A", "focus": "ج�
     drawRest(); tickElapsed();
   }
   function tickElapsed() {
+    const cr = document.getElementById('cdRun'); if (cr && UI.cardio && UI.cardio.t0) cr.textContent = Math.max(1, Math.round((Date.now() - UI.cardio.t0) / 60000));
     const el = document.getElementById('elapsed'); if (!el || UI.tab !== 'workout') return;
     const se = S.sessions[sessionId(UI.viewWeek || currentWeek(), UI.wk)];
     const sec = se ? (se.done && !se.startedAt ? se.durationSec : se.startedAt ? Math.floor((Date.now() - se.startedAt) / 1000) : 0) : 0;
@@ -1367,6 +1396,9 @@ window.PROGRAM = {"workouts": {"A": {"nameAr": "التمرين A", "focus": "ج�
         Store.saveSettings(); render(true); break;
       }
       case 'n-fav': { const f = S.settings.favMeals[+t.dataset.i], date = UI.nDate || L.todayISO(); if (f) { (S.settings.meals[date] = S.settings.meals[date] || []).push({ name: f.name, kcal: f.kcal, p: f.p }); Store.saveSettings(); render(true); } break; }
+      case 'n-fav-edit': UI.favEdit = !UI.favEdit; render(true); break;
+      case 'n-fav-del': S.settings.favMeals.splice(+t.dataset.i, 1); Store.saveSettings(); render(true); break;
+      case 'n-copy-prev': { const date = UI.nDate || L.todayISO(), prev = (S.settings.meals[L.addDays(date, -1)] || []).map(m => ({ name: m.name, kcal: m.kcal, p: m.p })); if (prev.length) { S.settings.meals[date] = prev; Store.saveSettings(); render(true); toast('تم نسخ وجبات أمس'); } break; }
       case 'n-del': { const date = UI.nDate || L.todayISO(); (S.settings.meals[date] || []).splice(+t.dataset.i, 1); Store.saveSettings(); render(true); break; }
       case 'timer': startRest(+t.dataset.sec || 30, t.dataset.label || 'مؤقت'); break;
       case 'toggle-open': UI.open = UI.open || {}; UI.open[t.dataset.oid] = !UI.open[t.dataset.oid]; render(true); break;
