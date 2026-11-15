@@ -178,6 +178,8 @@ nav.bar .in{grid-template-columns:repeat(5,1fr)}
 select.field{appearance:none}
 
 .grid2{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.vframe{width:100%;aspect-ratio:16/9;border:0;border-radius:12px;background:#000}
+.banner.gold{background:var(--amber-l,#fff3d6);color:var(--amber,#8a5a00)}
 
 </style>
 </head>
@@ -551,7 +553,15 @@ window.PROGRAM = {"workouts": {"A": {"nameAr": "التمرين A", "focus": "ج�
     const w = weeklyAvg(bodyweights, startISO).find(x => x.week === week), k = kcalWeeks(meals, startISO).find(x => x.week === week);
     return { week, done, volume: Math.round(volume), avgW: w ? w.avg : null, wN: w ? w.n : 0, avgKcal: k ? k.avg : null, kDays: k ? k.days : 0 };
   }
-  const api = { weekSummary, strengthTargets, stepPlan, weekActivity, hitDays, weeklyAvg, kcalWeeks, goalRatePct, coachAdvice, navyBF, calcTargets, sumMeals, activeDates, streak, pcTdee, pcProtein, pcMacros, weeklyTdee, strengthPct, muscleProgress, muscleGroupOf, muscleSplit, dailyCount, parseNum, weekOf, todayISO, addDays, platesFor, e1rm, historyFor, lastPerf, detectPRs, stalled, sessionTotals, csvRows, topSet, doneSets };
+  // Exercises with no progress over the last 3 completed weeks (course: 3 weeks without progress = stall).
+  function stalledLifts(sessions, week) {
+    const by = {};
+    Object.values(sessions || {}).forEach(se => { if (!se.week || se.week >= week || se.week < week - 3) return; Object.values(se.sets || {}).forEach(sl => {
+      const sc = doneSets(sl).reduce((m, s) => Math.max(m, s.w > 0 ? e1rm(s.w, s.r || 0) : (s.r || 0)), 0); if (!sc || !sl.name) return;
+      const o = by[sl.name] = by[sl.name] || {}; o[se.week] = Math.max(o[se.week] || 0, sc); }); });
+    return Object.keys(by).filter(n => { const o = by[n], a = o[week - 3], b = o[week - 2], c = o[week - 1]; return a && b && c && c <= a; });
+  }
+  const api = { stalledLifts, weekSummary, strengthTargets, stepPlan, weekActivity, hitDays, weeklyAvg, kcalWeeks, goalRatePct, coachAdvice, navyBF, calcTargets, sumMeals, activeDates, streak, pcTdee, pcProtein, pcMacros, weeklyTdee, strengthPct, muscleProgress, muscleGroupOf, muscleSplit, dailyCount, parseNum, weekOf, todayISO, addDays, platesFor, e1rm, historyFor, lastPerf, detectPRs, stalled, sessionTotals, csvRows, topSet, doneSets };
   if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.BWSLogic = api;
 })(typeof window !== 'undefined' ? window : globalThis);
 
@@ -590,7 +600,7 @@ window.PROGRAM = {"workouts": {"A": {"nameAr": "التمرين A", "focus": "ج�
     const d = defaultSettings(), o = Object.assign(d, st || {});
     o.schedule = Object.assign({}, d.schedule, (st && st.schedule) || {});
     o.plates = Object.assign({}, d.plates, (st && st.plates) || {});
-    o.targetW = (st && +st.targetW) || 0; o.daily = (st && st.daily) || {}; o.goals = Object.assign({ steps: 8000, water: 4000, cardio: 90 }, (st && st.goals) || {}); o.restBy = (st && st.restBy) || {}; o.nutri = Object.assign({ sex: 'm', age: '', h: '', w: '', act: 1.375, goal: 'recomp', kcal: null, protein: null }, (st && st.nutri) || {}); o.meals = (st && st.meals) || {}; o.measures = (st && st.measures) || []; o.favMeals = (st && st.favMeals) || []; o.swaps = (st && st.swaps) || {}; o.bodyweights = (st && st.bodyweights) || [];
+    o.deloadWeek = (st && +st.deloadWeek) || 0; o.targetW = (st && +st.targetW) || 0; o.daily = (st && st.daily) || {}; o.goals = Object.assign({ steps: 8000, water: 4000, cardio: 90 }, (st && st.goals) || {}); o.restBy = (st && st.restBy) || {}; o.nutri = Object.assign({ sex: 'm', age: '', h: '', w: '', act: 1.375, goal: 'recomp', kcal: null, protein: null }, (st && st.nutri) || {}); o.meals = (st && st.meals) || {}; o.measures = (st && st.measures) || []; o.favMeals = (st && st.favMeals) || []; o.swaps = (st && st.swaps) || {}; o.bodyweights = (st && st.bodyweights) || [];
     return o;
   }
   /* ---------- state ---------- */
@@ -820,7 +830,19 @@ window.PROGRAM = {"workouts": {"A": {"nameAr": "التمرين A", "focus": "ج�
       '<div class="muted small" style="margin-top:10px">' + (vw !== cw ? '<button class="btn ghost sm" data-act="week-now">العودة للأسبوع الحالي (' + cw + ')</button>' : '') + '</div>';
   }
 
+  function deloadOn() { return S.settings.deloadWeek && S.settings.deloadWeek === (UI.viewWeek || currentWeek()); }
+  function deloadBanner() {
+    const wk = UI.viewWeek || currentWeek();
+    if (deloadOn()) return '<div class="banner gold"><span>🛡</span><div class="sp"><b>أسبوع تخفيف</b><div class="small">نصف المجموعات وأوزان أخف بنحو 20% لهذا الأسبوع فقط.</div></div><button class="btn ghost sm" data-act="deload-off">إلغاء</button></div>';
+    const st = L.stalledLifts(S.sessions, wk);
+    if (st.length < 3) return '';
+    return '<div class="banner gold"><span>⚠️</span><div class="sp"><b>ركود في ' + st.length + ' تمارين منذ 3 أسابيع</b><div class="small">راجع النوم والسعرات والشكل أولاً. ثم يوصي الكورس بأسبوع تخفيف: نصف المجموعات وأخف بنحو 20%.</div></div><button class="btn sm" data-act="deload-on">فعّل التخفيف</button></div>';
+  }
   function suggestion(ex, c, last) {
+    if (last && deloadOn()) {
+      const half = Math.max(1, Math.ceil(ex.sets / 2)), lw = last.top && last.top.w;
+      return '<div class="nownext">🛡 أسبوع تخفيف: ' + (c.kind === 'weight' && lw ? '<b>' + num(Math.round(lw * 0.8 / 1.25) * 1.25) + ' كجم</b> × ' : 'بجهد خفيف × ') + half + ' مجموعات فقط (آخر مرة: ' + (lw ? num(lw) + ' كجم' : 'مسجّل') + ').</div>';
+    }
     // returns HTML "last time / next goal" line
     if (!last) return '<div class="nownext">' + (c.kind === 'wopt' ? 'أول مرة — ابدأ بوزن الجسم (اترك الوزن فارغاً أو 0) وارفع التكرارات نحو 15.' : 'أول مرة لهذا التمرين — اختر وزناً يسمح لك بالوصول لأعلى التكرارات بجهد متوسط (8).') + '</div>';
     const sets = last.sets.map(s => (hasW(c.kind) && (c.kind === 'weight' || s.w) ? num(s.w) + '×' : '') + s.r).join(' · ');
@@ -842,6 +864,7 @@ window.PROGRAM = {"workouts": {"A": {"nameAr": "التمرين A", "focus": "ج�
     const se = getSession(week, wk, true), pr = slotProgress(se), W = progWorkout(wk);
     let html = '<div class="topbar"><button class="icon-btn" data-act="tab" data-tab="home" aria-label="رجوع">' + ICON.back + '</button><div><div class="muted small">الأسبوع ' + week + (se.done ? ' · مكتمل' : '') + '</div><h2 style="margin:0">' + esc(W.nameAr) + '</h2></div></div>' +
       '<div class="row" style="gap:10px;margin-top:4px"><div class="tag" id="elapsed">⏱ 00:00</div><div class="progress sp"><i style="width:' + Math.round(100 * pr.d / pr.t) + '%"></i></div><b class="small" style="direction:ltr">' + pr.d + '/' + pr.t + '</b></div>';
+    html += deloadBanner();
     const ms = L.muscleSplit(W.exercises, MUSCLES);
     html += '<div class="card"><h2 style="font-size:17px">العضلات المستهدفة <span class="muted small">(تقريبي حسب عدد المجموعات)</span></h2>' + ms.map(m => '<div class="mrow"><span>' + MUSCLE_AR[m.m] + '</span><div class="mbar"><i style="width:' + m.pct + '%"></i></div><b>' + m.pct + '%</b></div>').join('') + '</div>';
     if (wk !== 'AB') html += warmupHTML(se);
@@ -860,7 +883,8 @@ window.PROGRAM = {"workouts": {"A": {"nameAr": "التمرين A", "focus": "ج�
   const isOpen = id => !!(UI.open && UI.open[id]);
   function vidBtn(it) {
     const href = it.video ? 'https://youtu.be/' + it.video : it.search;
-    return href ? '<a class="btn ghost sm" href="' + href + '" target="_blank" rel="noopener">' + ICON.play + (it.video ? ' شاهد الشرح' : ' ابحث عن الشرح') + '</a>' : '';
+    if (it.video) return '<button class="btn ghost sm" data-act="vid" data-v="' + it.video + '">' + ICON.play + ' شاهد الشرح</button>';
+    return href ? '<a class="btn ghost sm" href="' + href + '" target="_blank" rel="noopener">' + ICON.play + ' ابحث عن الشرح</a>' : '';
   }
   function timerBtns(timers, name) {
     return (timers || []).map(t => '<button class="btn sm" data-act="timer" data-sec="' + t.sec + '" data-label="' + esc(t.label || name) + '">⏱ ' + esc(t.label || '') + ' ' + (t.sec >= 60 && t.sec % 60 === 0 ? (t.sec / 60) + ' د' : t.sec + ' ث') + '</button>').join('');
@@ -924,8 +948,8 @@ window.PROGRAM = {"workouts": {"A": {"nameAr": "التمرين A", "focus": "ج�
       '<div class="sets">' + rows + '</div>' +
       '<div class="exbar" style="margin-bottom:6px"><span class="restctl"><button data-act="rest-adj" data-key="' + key + '" data-d="-15" aria-label="أنقص الراحة">−</button><button class="go" data-act="rest-now" data-key="' + key + '">⏱ راحة ' + fmtT(restFor(wk, ex.id, slot.name)) + '</button><button data-act="rest-adj" data-key="' + key + '" data-d="15" aria-label="زد الراحة">+</button></span>' +
       '<button class="btn ghost sm" data-act="add-set" data-key="' + key + '">+ مجموعة</button>' + (slot.sets.length > 1 && !slot.sets[slot.sets.length - 1].done ? '<button class="btn ghost sm" data-act="del-set" data-key="' + key + '">− مجموعة</button>' : '') + '</div>' +
-      '<div class="exbar"><a class="btn ghost sm" href="https://youtu.be/' + slot.video + '" target="_blank" rel="noopener">' + ICON.play + ' شاهد الشرح</a>' +
-      (hasW(slot.kind) ? '<button class="btn ghost sm" data-act="plates">' + ICON.scale + ' الأقراص</button>' : '') +
+      '<div class="exbar"><button class="btn ghost sm" data-act="vid" data-v="' + slot.video + '">' + ICON.play + ' شاهد الشرح</button>' +
+      (hasW(slot.kind) ? '<button class="btn ghost sm" data-act="plates" data-key="' + key + '">' + ICON.scale + ' الأقراص</button>' : '') +
       (ex.alts && ex.alts.length ? '<button class="btn ghost sm" data-act="swap" data-key="' + key + '">' + ICON.swap + ' بدّل</button>' : '') + '</div>' +
       '<textarea class="notebox" data-act-note="' + key + '" rows="1" placeholder="ملاحظات">' + esc(slot.note && slot.note !== ex.note ? slot.note : '') + '</textarea></div>';
   }
@@ -1070,6 +1094,12 @@ window.PROGRAM = {"workouts": {"A": {"nameAr": "التمرين A", "focus": "ج�
   /* ---------- nutrition ---------- */
   const GOALS = { cut: ['تنشيف', 'عجز ~20%'], recomp: ['بناء عضل وحرق دهون', 'عجز ~10%'], maintain: ['حفاظ', 'بدون عجز'], bulk: ['زيادة عضل', 'فائض ~10%'] };
   const ACTS = [[1.2, 'قليل الحركة'], [1.375, 'خفيف (1–3 تمارين أسبوعياً)'], [1.55, 'متوسط (3–5 تمارين)'], [1.725, 'عالٍ (6–7 تمارين)']];
+  // Approximate values per usual serving (estimates, not lab data; a scale is more accurate).
+  const PRESETS = [
+    ['بيضة مسلوقة', 78, 6], ['رغيف خبز عربي صغير', 165, 5.5], ['تمر (3 حبات)', 200, 1.5], ['زبادي (كوب 200 جم)', 120, 7], ['فول مدمس (طبق)', 220, 14],
+    ['حمص (طبق)', 250, 12], ['صدر دجاج مشوي (150 جم)', 250, 46], ['أرز أبيض مطبوخ (كوب)', 210, 4], ['كبسة دجاج (طبق)', 700, 35], ['شاورما دجاج (ساندويتش)', 500, 30],
+    ['تونة بالماء (علبة)', 120, 26], ['شوفان (40 جم جاف)', 150, 5], ['حليب (كوب)', 150, 8], ['واي بروتين (سكوب)', 120, 24], ['موزة', 105, 1], ['قهوة عربية (فنجان)', 5, 0]
+  ];
   function viewNutrition() {
     const st = S.settings, nu = st.nutri, date = UI.nDate || L.todayISO(), meals = st.meals[date] || [], sum = L.sumMeals(meals);
     const lastW = st.bodyweights.length ? st.bodyweights[st.bodyweights.length - 1].kg : '';
@@ -1097,6 +1127,7 @@ window.PROGRAM = {"workouts": {"A": {"nameAr": "التمرين A", "focus": "ج�
     h += coachCard();
     h += '<div class="card"><h2 style="font-size:17px">أضف وجبة</h2>' +
       (st.favMeals.length ? '<div class="chips" style="margin-bottom:8px">' + st.favMeals.map((f, i) => '<button class="chip blue" data-act="' + (UI.favEdit ? 'n-fav-del' : 'n-fav') + '" data-i="' + i + '">' + (UI.favEdit ? '✕ ' : '') + esc(f.name) + ' · ' + f.kcal + '</button>').join('') + '</div><div class="row small" style="margin:-2px 0 8px"><button class="btn ghost sm" data-act="n-fav-edit">' + (UI.favEdit ? 'تم' : 'حذف من المفضلة') + '</button></div>' : '') +
+      '<details style="margin-bottom:8px"><summary class="small muted">أصناف سريعة (قيم تقريبية لحصة معتادة)</summary><div class="chips" style="margin-top:8px">' + PRESETS.map((p, i) => '<button class="chip" data-act="n-preset" data-i="' + i + '">' + esc(p[0]) + ' · ' + p[1] + '</button>').join('') + '</div></details>' +
       (((st.meals || {})[L.addDays(UI.nDate || L.todayISO(), -1)] || []).length && !(((st.meals || {})[UI.nDate || L.todayISO()]) || []).length ? '<button class="btn ghost sm" style="margin-bottom:8px" data-act="n-copy-prev">نسخ وجبات أمس</button>' : '') +
       '<input id="mName" class="field" placeholder="اسم الوجبة (مثال: دجاج وأرز)"><div class="row" style="gap:8px;margin-top:8px"><input id="mKcal" class="field num sp" inputmode="numeric" placeholder="سعرات"><input id="mProt" class="field num sp" inputmode="decimal" placeholder="بروتين جم (اختياري)"></div>' +
       '<label class="row small" style="gap:8px;margin-top:8px"><input id="mFav" type="checkbox"> احفظها في المفضلة لإضافتها بضغطة</label><button class="btn block" style="margin-top:10px" data-act="n-add">إضافة</button></div>';
@@ -1237,6 +1268,10 @@ window.PROGRAM = {"workouts": {"A": {"nameAr": "التمرين A", "focus": "ج�
 
   /* ---------- overlays ---------- */
   function sheet(inner) { return '<div class="overlay" data-act="close-overlay"><div class="sheet" data-stop="1">' + inner + '</div></div>'; }
+  function overlayVideo(id) {
+    return sheet('<h2>شرح التمرين</h2><iframe class="vframe" src="https://www.youtube-nocookie.com/embed/' + esc(id) + '?rel=0&playsinline=1&modestbranding=1" title="شرح التمرين" allow="accelerometer; encrypted-media; picture-in-picture; fullscreen" allowfullscreen referrerpolicy="strict-origin-when-cross-origin" loading="lazy"></iframe>' +
+      '<div class="row" style="margin-top:12px;gap:8px"><a class="btn ghost sm" href="https://youtu.be/' + esc(id) + '" target="_blank" rel="noopener">إن لم يعمل: افتحه في يوتيوب</a><div class="sp"></div><button class="btn sm" data-act="close-overlay">إغلاق</button></div>');
+  }
   function overlaySwap(key) {
     const [wk, exId] = key.split('.'), ex = exDef(wk, exId), se = UI.sessionForOverlay, slot = se.sets[key];
     let h = '<h2>بدّل التمرين</h2><p class="sub">اختر بديلاً يناسب معداتك. يُحفظ اختيارك للأسابيع القادمة.</p>';
@@ -1297,11 +1332,19 @@ window.PROGRAM = {"workouts": {"A": {"nameAr": "التمرين A", "focus": "ج�
     const nav = [['home', 'الرئيسية', ICON.home], ['workout', 'التمرين', ICON.dumb], ['nutri', 'التغذية', ICON.food], ['progress', 'التقدم', ICON.chart], ['settings', 'الإعدادات', ICON.gear]]
       .map(n => '<button class="' + (UI.tab === n[0] || (UI.tab === 'rec' && n[0] === 'home') ? 'on' : '') + '" data-act="tab" data-tab="' + n[0] + '">' + n[2] + n[1] + '</button>').join('');
     let ov = '';
-    if (UI.overlay) { const o = UI.overlay; ov = o.type === 'swap' ? overlaySwap(o.key) : o.type === 'plates' ? overlayPlates() : o.type === 'recap' ? overlayRecap() : o.type === 'checkin' ? overlayCheckin() : o.type === 'warm' ? overlayWarm() : o.type === 'weigh' ? overlayWeigh() : o.type === 'cardio' ? overlayCardio() : o.type === 'text' ? overlayText(o.title, o.text) : ''; }
+    if (UI.overlay) { const o = UI.overlay; ov = o.type === 'video' ? overlayVideo(o.id) : o.type === 'swap' ? overlaySwap(o.key) : o.type === 'plates' ? overlayPlates() : o.type === 'recap' ? overlayRecap() : o.type === 'checkin' ? overlayCheckin() : o.type === 'warm' ? overlayWarm() : o.type === 'weigh' ? overlayWeigh() : o.type === 'cardio' ? overlayCardio() : o.type === 'text' ? overlayText(o.title, o.text) : ''; }
     app.innerHTML = v + '<div id="rest"></div><nav class="bar"><div class="in">' + nav + '</div></nav>' + ov;
     document.body.style.overflow = UI.overlay && UI.overlay.type === 'recap' ? 'hidden' : '';
     if (keepScroll) window.scrollTo(0, y);
-    drawRest(); tickElapsed();
+    drawRest(); tickElapsed(); syncWake();
+  }
+  let wakeLock = null;
+  async function syncWake() {
+    const want = UI.tab === 'workout' && !document.hidden;
+    try {
+      if (want && !wakeLock && navigator.wakeLock) { wakeLock = await navigator.wakeLock.request('screen'); wakeLock.addEventListener('release', () => { wakeLock = null; }); }
+      else if (!want && wakeLock) { const w = wakeLock; wakeLock = null; await w.release(); }
+    } catch (err) { wakeLock = null; }
   }
   function tickElapsed() {
     const cr = document.getElementById('cdRun'); if (cr && UI.cardio && UI.cardio.t0) cr.textContent = Math.max(1, Math.round((Date.now() - UI.cardio.t0) / 60000));
@@ -1396,6 +1439,7 @@ window.PROGRAM = {"workouts": {"A": {"nameAr": "التمرين A", "focus": "ج�
         Store.saveSettings(); render(true); break;
       }
       case 'n-fav': { const f = S.settings.favMeals[+t.dataset.i], date = UI.nDate || L.todayISO(); if (f) { (S.settings.meals[date] = S.settings.meals[date] || []).push({ name: f.name, kcal: f.kcal, p: f.p }); Store.saveSettings(); render(true); } break; }
+      case 'n-preset': { const p = PRESETS[+t.dataset.i], date = UI.nDate || L.todayISO(); if (p) { (S.settings.meals[date] = S.settings.meals[date] || []).push({ name: p[0], kcal: p[1], p: p[2] }); Store.saveSettings(); render(true); toast('أُضيفت: ' + p[0]); } break; }
       case 'n-fav-edit': UI.favEdit = !UI.favEdit; render(true); break;
       case 'n-fav-del': S.settings.favMeals.splice(+t.dataset.i, 1); Store.saveSettings(); render(true); break;
       case 'n-copy-prev': { const date = UI.nDate || L.todayISO(), prev = (S.settings.meals[L.addDays(date, -1)] || []).map(m => ({ name: m.name, kcal: m.kcal, p: m.p })); if (prev.length) { S.settings.meals[date] = prev; Store.saveSettings(); render(true); toast('تم نسخ وجبات أمس'); } break; }
@@ -1474,8 +1518,18 @@ window.PROGRAM = {"workouts": {"A": {"nameAr": "التمرين A", "focus": "ج�
         const c = choice(wk, exId); Object.assign(sl, c, { sets: blankSets(exDef(wk, exId).sets), note: '' });
         Store.saveSettings(); Store.saveSession(se.id); UI.overlay = null; render(true); break;
       }
-      case 'plates': UI.plateCalc = UI.plateCalc || { mode: 'bar', total: '' }; UI.overlay = { type: 'plates' }; render(true); break;
+      case 'plates': {
+        const sl = t.dataset.key && getSession(week, UI.wk).sets[t.dataset.key];
+        if (sl) { const lp = L.lastPerf(S.sessions, sl.name, sessionId(week, UI.wk)), cur = sl.sets.map(s => s.w).filter(w => w > 0).pop(), w = cur || (lp && lp.top && lp.top.w) || ''; UI.plateCalc = { mode: /dumbbell|goblet/i.test(sl.name) ? 'db' : 'bar', total: w ? String(w) : '' }; }
+        else UI.plateCalc = UI.plateCalc || { mode: 'bar', total: '' };
+        UI.overlay = { type: 'plates' }; render(true); break;
+      }
       case 'pc-mode': UI.plateCalc.mode = t.dataset.m; render(true); break;
+      case 'vid': // YouTube refuses embeds without a real https origin (error 153): local files open the video in YouTube instead
+        if (location.protocol !== 'https:' && location.protocol !== 'http:' || location.origin === 'null') { window.open('https://youtu.be/' + t.dataset.v, '_blank', 'noopener'); break; }
+        UI.overlay = { type: 'video', id: t.dataset.v }; render(true); break;
+      case 'deload-on': S.settings.deloadWeek = UI.viewWeek || currentWeek(); Store.saveSettings(); render(true); break;
+      case 'deload-off': S.settings.deloadWeek = 0; Store.saveSettings(); render(true); break;
       case 'close-overlay': UI.overlay = null; render(true); break;
       case 'finish': {
         const se = getSession(week, UI.wk), pr = slotProgress(se);
@@ -1534,7 +1588,7 @@ window.PROGRAM = {"workouts": {"A": {"nameAr": "التمرين A", "focus": "ج�
   app.addEventListener('click', onClick);
   app.addEventListener('change', onChange);
   app.addEventListener('input', onInput);
-  document.addEventListener('visibilitychange', () => { if (!document.hidden && rest) tickRest(); });
+  document.addEventListener('visibilitychange', () => { if (!document.hidden && rest) tickRest(); syncWake(); });
 
   /* ---------- boot ---------- */
   app.innerHTML = '<div style="padding:60px 0;text-align:center" class="muted">جارٍ التحميل…</div>';
