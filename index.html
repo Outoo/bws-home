@@ -1525,8 +1525,8 @@ window.PROGRAM = {"workouts": {"A": {"nameAr": "التمرين A", "focus": "ج�
         UI.overlay = { type: 'plates' }; render(true); break;
       }
       case 'pc-mode': UI.plateCalc.mode = t.dataset.m; render(true); break;
-      case 'vid': // YouTube refuses embeds without a real https origin (error 153): local files open the video in YouTube instead
-        if (location.protocol !== 'https:' && location.protocol !== 'http:' || location.origin === 'null') { window.open('https://youtu.be/' + t.dataset.v, '_blank', 'noopener'); break; }
+      case 'vid': // YouTube refuses embeds without a real https origin (error 153): local files and embedded previews (artifact frames) open the video in YouTube instead
+        if (location.protocol !== 'https:' && location.protocol !== 'http:' || location.origin === 'null' || window.top !== window.self) { window.open('https://youtu.be/' + t.dataset.v, '_blank', 'noopener'); break; }
         UI.overlay = { type: 'video', id: t.dataset.v }; render(true); break;
       case 'deload-on': S.settings.deloadWeek = UI.viewWeek || currentWeek(); Store.saveSettings(); render(true); break;
       case 'deload-off': S.settings.deloadWeek = 0; Store.saveSettings(); render(true); break;
