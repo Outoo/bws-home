@@ -3,7 +3,12 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<meta name="theme-color" content="#ffffff">
+<meta name="theme-color" content="#0b1220">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
 <title>تمريني — متتبع التمارين</title>
 <style>
 :root{
@@ -561,7 +566,30 @@ window.PROGRAM = {"workouts": {"A": {"nameAr": "التمرين A", "focus": "ج�
       const o = by[sl.name] = by[sl.name] || {}; o[se.week] = Math.max(o[se.week] || 0, sc); }); });
     return Object.keys(by).filter(n => { const o = by[n], a = o[week - 3], b = o[week - 2], c = o[week - 1]; return a && b && c && c <= a; });
   }
-  const api = { stalledLifts, weekSummary, strengthTargets, stepPlan, weekActivity, hitDays, weeklyAvg, kcalWeeks, goalRatePct, coachAdvice, navyBF, calcTargets, sumMeals, activeDates, streak, pcTdee, pcProtein, pcMacros, weeklyTdee, strengthPct, muscleProgress, muscleGroupOf, muscleSplit, dailyCount, parseNum, weekOf, todayISO, addDays, platesFor, e1rm, historyFor, lastPerf, detectPRs, stalled, sessionTotals, csvRows, topSet, doneSets };
+  // Next-workout target per the course: linear progression first (raise the weight when the middle/top of the range felt comfortable),
+  // double progression later (raise only after hitting the top of the range on every set). Below the minimum reps: lower the weight.
+  function nextTargets(sets, rg, method, inc) {
+    const d = (sets || []).filter(s => s.r > 0); if (!d.length || !rg) return null;
+    const w = Math.max.apply(null, d.map(s => s.w || 0)), top = d.filter(s => (s.w || 0) === w);
+    const minR = Math.min.apply(null, top.map(s => s.r)), avgR = top.reduce((a, s) => a + s.r, 0) / top.length, maxE = Math.max.apply(null, top.map(s => s.e || 0));
+    const mid = Math.ceil((rg.lo + rg.hi) / 2);
+    if (avgR < rg.lo) return { w: Math.max(0, w - inc), r: rg.lo, act: 'down' };
+    if (minR >= rg.hi) return { w: w + inc, r: rg.lo, act: 'up' };
+    if (method !== 'double' && minR >= mid && maxE <= 8) return { w: w + inc, r: rg.lo, act: 'up' };
+    return { w, r: Math.min(rg.hi, minR + 1), act: 'keep' };
+  }
+  // First-time estimate (about 45% of the course's 5-rep strength target, for 8-10 reps). Only for the main lifts; an estimate, not a prescription.
+  const START = [
+    { test: n => /flat dumbbell press/i.test(n), m: 0.22 }, { test: n => /incline dumbbell press/i.test(n), m: 0.2 },
+    { test: n => /bench press/i.test(n) && !/dumbbell|close|incline|decline/i.test(n), m: 0.45 }, { test: n => /overhead press/i.test(n) && /barbell/i.test(n), m: 0.27 },
+    { test: n => /goblet squat/i.test(n), m: 0.22 }, { test: n => /squat/i.test(n) && /barbell|back/i.test(n) && !/goblet|sissy|split|front foot/i.test(n), m: 0.56 },
+    { test: n => /deadlift/i.test(n) && !/romanian|stiff|straight/i.test(n), m: 0.63 }
+  ];
+  function startWeight(name, bw, inc) {
+    bw = +bw; if (!(bw > 0)) return null; const s = START.find(x => x.test(name || '')); if (!s) return null;
+    const step = inc || 2.5; return Math.max(step, Math.round(bw * s.m / step) * step);
+  }
+  const api = { nextTargets, startWeight, stalledLifts, weekSummary, strengthTargets, stepPlan, weekActivity, hitDays, weeklyAvg, kcalWeeks, goalRatePct, coachAdvice, navyBF, calcTargets, sumMeals, activeDates, streak, pcTdee, pcProtein, pcMacros, weeklyTdee, strengthPct, muscleProgress, muscleGroupOf, muscleSplit, dailyCount, parseNum, weekOf, todayISO, addDays, platesFor, e1rm, historyFor, lastPerf, detectPRs, stalled, sessionTotals, csvRows, topSet, doneSets };
   if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.BWSLogic = api;
 })(typeof window !== 'undefined' ? window : globalThis);
 
@@ -600,7 +628,7 @@ window.PROGRAM = {"workouts": {"A": {"nameAr": "التمرين A", "focus": "ج�
     const d = defaultSettings(), o = Object.assign(d, st || {});
     o.schedule = Object.assign({}, d.schedule, (st && st.schedule) || {});
     o.plates = Object.assign({}, d.plates, (st && st.plates) || {});
-    o.deloadWeek = (st && +st.deloadWeek) || 0; o.targetW = (st && +st.targetW) || 0; o.daily = (st && st.daily) || {}; o.goals = Object.assign({ steps: 8000, water: 4000, cardio: 90 }, (st && st.goals) || {}); o.restBy = (st && st.restBy) || {}; o.nutri = Object.assign({ sex: 'm', age: '', h: '', w: '', act: 1.375, goal: 'recomp', kcal: null, protein: null }, (st && st.nutri) || {}); o.meals = (st && st.meals) || {}; o.measures = (st && st.measures) || []; o.favMeals = (st && st.favMeals) || []; o.swaps = (st && st.swaps) || {}; o.bodyweights = (st && st.bodyweights) || [];
+    o.progression = st && st.progression === 'double' ? 'double' : 'linear'; o.deloadWeek = (st && +st.deloadWeek) || 0; o.targetW = (st && +st.targetW) || 0; o.daily = (st && st.daily) || {}; o.goals = Object.assign({ steps: 8000, water: 4000, cardio: 90 }, (st && st.goals) || {}); o.restBy = (st && st.restBy) || {}; o.nutri = Object.assign({ sex: 'm', age: '', h: '', w: '', act: 1.375, goal: 'recomp', kcal: null, protein: null }, (st && st.nutri) || {}); o.meals = (st && st.meals) || {}; o.measures = (st && st.measures) || []; o.favMeals = (st && st.favMeals) || []; o.swaps = (st && st.swaps) || {}; o.bodyweights = (st && st.bodyweights) || [];
     return o;
   }
   /* ---------- state ---------- */
@@ -838,20 +866,28 @@ window.PROGRAM = {"workouts": {"A": {"nameAr": "التمرين A", "focus": "ج�
     if (st.length < 3) return '';
     return '<div class="banner gold"><span>⚠️</span><div class="sp"><b>ركود في ' + st.length + ' تمارين منذ 3 أسابيع</b><div class="small">راجع النوم والسعرات والشكل أولاً. ثم يوصي الكورس بأسبوع تخفيف: نصف المجموعات وأخف بنحو 20%.</div></div><button class="btn sm" data-act="deload-on">فعّل التخفيف</button></div>';
   }
+  function repRange(ex) { const m = /(\d+)\s*-\s*(\d+)/.exec(ex.reps || ''); return m ? { lo: +m[1], hi: +m[2] } : null; }
+  function incFor(name) { return /Lateral|Curl|Face Pull|Calf|Raise|Extension|Kickback/i.test(name) ? 1.25 : (/barbell/i.test(name) && /squat|deadlift|hip thrust|lunge/i.test(name) ? 5 : 2.5); }
+  function bwNow() { const b = S.settings.bodyweights; return b.length ? b[b.length - 1].kg : (+S.settings.nutri.w || 0); }
+  function targetFor(ex, c, last) {
+    const rg = repRange(ex); if (c.kind !== 'weight' || !rg) return null; const inc = incFor(c.name);
+    if (last && last.sets && last.sets.length) { const t = L.nextTargets(last.sets, rg, S.settings.progression, inc); return t ? Object.assign({ inc, first: false }, t) : null; }
+    const sw = L.startWeight(c.name, bwNow(), inc); return { inc, first: true, w: sw, r: rg.lo };
+  }
   function suggestion(ex, c, last) {
     if (last && deloadOn()) {
       const half = Math.max(1, Math.ceil(ex.sets / 2)), lw = last.top && last.top.w;
       return '<div class="nownext">🛡 أسبوع تخفيف: ' + (c.kind === 'weight' && lw ? '<b>' + num(Math.round(lw * 0.8 / 1.25) * 1.25) + ' كجم</b> × ' : 'بجهد خفيف × ') + half + ' مجموعات فقط (آخر مرة: ' + (lw ? num(lw) + ' كجم' : 'مسجّل') + ').</div>';
     }
     // returns HTML "last time / next goal" line
+    if (!last && c.kind === 'weight') { const tg = targetFor(ex, c, last); if (tg && tg.w) return '<div class="nownext">أول مرة — وزن مبدئي تقديري: <b>' + num(tg.w) + ' كجم</b> × ' + tg.r + '+ تكرارات (نحو 45% من هدف قوتك). عدّله لما يسمح لك بأعلى التكرارات بجهد متوسط.</div>'; }
     if (!last) return '<div class="nownext">' + (c.kind === 'wopt' ? 'أول مرة — ابدأ بوزن الجسم (اترك الوزن فارغاً أو 0) وارفع التكرارات نحو 15.' : 'أول مرة لهذا التمرين — اختر وزناً يسمح لك بالوصول لأعلى التكرارات بجهد متوسط (8).') + '</div>';
     const sets = last.sets.map(s => (hasW(c.kind) && (c.kind === 'weight' || s.w) ? num(s.w) + '×' : '') + s.r).join(' · ');
     let goal = '';
     const m = /(\d+)\s*-\s*(\d+)/.exec(ex.reps);
     if (c.kind === 'weight' && m) {
-      const hi = +m[2], allHit = last.sets.length >= ex.sets && last.sets.every(s => s.r >= hi);
-      const inc = /Lateral|Curl|Face Pull|Calf/i.test(c.name) ? 1.25 : 2.5;
-      goal = allHit ? 'جرّب <b>' + num(last.top.w + inc) + ' كجم</b> هذا الأسبوع.' : 'حاول زيادة <b>تكرار واحد</b> في كل مجموعة بنفس الوزن.';
+      const tg = targetFor(ex, c, last);
+      goal = !tg ? '' : tg.act === 'up' ? 'ارفع إلى <b>' + num(tg.w) + ' كجم</b> وابدأ من ' + tg.r + ' تكرارات.' : tg.act === 'down' ? 'نزلت عن الحد الأدنى: خفّض إلى <b>' + num(tg.w) + ' كجم</b> وارجع من ' + tg.r + ' تكرارات.' : 'ابقَ على <b>' + num(tg.w) + ' كجم</b> وحاول <b>' + tg.r + '</b> تكرارات في كل مجموعة.';
     } else if (c.kind === 'wopt') {
       const top = last.sets.length >= ex.sets && last.sets.every(s => s.r >= 15);
       goal = top ? 'وصلت لـ 3×15: أضف <b>وزناً صغيراً</b> (قرص أو دامبل على الصدر) وابدأ من 8 تكرارات.' : 'ارفع التكرارات تدريجياً نحو <b>3×15</b> بتحكم كامل ثم أضف وزناً.';
@@ -902,7 +938,8 @@ window.PROGRAM = {"workouts": {"A": {"nameAr": "التمرين A", "focus": "ج�
     se.warm = se.warm || {};
     const items = warmItems(), dn = items.filter(i => se.warm[i.id]).length;
     let h = '<div class="card pink"><div class="row"><b>🔥 الإحماء (' + dn + '/' + items.length + ')</b></div><div class="progress" style="margin:8px 0"><i style="width:' + Math.round(100 * dn / items.length) + '%"></i></div>' +
-      '<div class="row" style="gap:8px"><button class="btn sm sp" data-act="warm-start">' + ICON.play + (dn ? ' تابع الإحماء' : ' ابدأ الإحماء خطوة بخطوة') + '</button><button class="btn ghost sm" data-act="warm-toggle">' + (UI.warmOpen ? 'إخفاء الأوزان ▲' : 'أوزان الإحماء ▼') + '</button></div>';
+      '<div class="row" style="gap:8px"><button class="btn sm sp" data-act="warm-start">' + ICON.play + (dn ? ' تابع الإحماء' : ' ابدأ الإحماء خطوة بخطوة') + '</button><button class="btn ghost sm" data-act="warm-toggle">' + (UI.warmOpen ? 'إخفاء الأوزان ▲' : 'أوزان الإحماء ▼') + '</button></div>' +
+      '<div class="row" style="margin-top:8px"><button class="btn ghost sm" data-act="vid" data-v="' + esc(P.warmup.video) + '">' + ICON.play + ' شاهد فيديو كل حركات الإحماء</button></div>';
     if (UI.warmOpen) h += '<p class="small" style="margin:12px 0 4px"><b>مجموعات الإحماء</b> قبل أول تمرين علوي وقبل أول تمرين سفلي فقط. باقي التمارين لا تحتاجها. أدخل وزن العمل:</p><b class="small">أول تمرين علوي</b><input id="warmW" class="field num" inputmode="decimal" placeholder="وزن العمل بالكجم" value="' + (UI.warmW || '') + '"><div id="warmOut" class="small" style="margin:8px 0">' + warmOut(UI.warmW) + '</div><b class="small">أول تمرين سفلي</b><input id="warmW2" class="field num" inputmode="decimal" placeholder="وزن العمل بالكجم" value="' + (UI.warmW2 || '') + '"><div id="warmOut2" class="small" style="margin-top:8px">' + warmOut(UI.warmW2) + '</div>';
     return h + '</div>';
   }
@@ -912,7 +949,7 @@ window.PROGRAM = {"workouts": {"A": {"nameAr": "التمرين A", "focus": "ج�
     const body = it.id === 'bike' ? '<p>' + esc(it.how) + '</p>' : bandChip(it.needs) + '<h3 style="font-size:15px;margin:10px 0 2px">الفائدة</h3><p style="margin:0">' + esc(it.why) + '</p><h3 style="font-size:15px;margin:10px 0 2px">الطريقة</h3><p style="margin:0">' + esc(it.how) + '</p>';
     return '<div class="overlay"><div class="sheet" data-stop="1"><div class="row"><span class="tag">إحماء ' + (i + 1) + '/' + items.length + '</span><div class="sp"></div><button class="icon-btn" data-act="close-overlay" aria-label="إغلاق">✕</button></div>' +
       '<div class="dots">' + dots + '</div><h2 style="margin-top:6px">' + esc(it.nameAr) + '</h2><div class="muted small">' + esc(it.meta || '') + '</div>' + body +
-      '<div class="exbar" style="margin:12px 0">' + timerBtns(it.timers, it.nameAr) + vidBtn(it) + '</div>' +
+      '<div class="exbar" style="margin:12px 0">' + timerBtns(it.timers, it.nameAr) + vidBtn(it.video ? it : Object.assign({}, it, { video: P.warmup.video })) + '</div>' +
       '<div class="row" style="gap:8px"><button class="btn ghost" data-act="warm-go" data-d="-1"' + (i === 0 ? ' disabled style="opacity:.4"' : '') + '>السابق</button><button class="btn ghost" data-act="warm-go" data-d="1">تخطي</button><button class="btn sp" data-act="warm-next">' + ICON.check + (i === items.length - 1 ? ' إنهاء الإحماء' : ' تم') + '</button></div></div></div>';
   }
   function overlayWeigh() {
@@ -924,6 +961,18 @@ window.PROGRAM = {"workouts": {"A": {"nameAr": "التمرين A", "focus": "ج�
     return P.warmup.sets.map((s, i) => '<div class="row" style="margin:4px 0"><span>مجموعة ' + (i + 1) + ': <b>' + num(Math.round(n * s[0]) / 100) + ' كجم</b> × ' + s[1] + '</span><span class="sp"></span><button class="btn ghost sm" data-act="timer" data-sec="' + s[2] + '" data-label="راحة إحماء">⏱ ' + (s[2] / 60) + ' د</button></div>').join('');
   }
 
+  function qbar(slot, key, ex, last) {
+    if (slot.kind === 'time' || slot.done) return '';
+    const tg = targetFor(ex, slot, last), rg = repRange(ex), nx = slot.sets.find(s => !s.done); if (!nx) return '';
+    let h = '<div class="qbar">';
+    if (slot.kind === 'weight') {
+      const inc = incFor(slot.name), cur = nx.w != null ? nx.w : (tg && tg.w != null ? tg.w : (last && last.top ? last.top.w : null));
+      h += '<div class="row small" style="gap:6px;flex-wrap:wrap"><span class="muted">الوزن</span><button class="chip" data-act="qw" data-key="' + key + '" data-d="-' + inc + '">− ' + num(inc) + '</button><b style="min-width:54px;text-align:center">' + (cur == null ? '—' : num(cur) + ' كجم') + '</b><button class="chip" data-act="qw" data-key="' + key + '" data-d="' + inc + '">+ ' + num(inc) + '</button>' +
+        (tg && tg.w ? '<button class="chip blue" data-act="qfill" data-key="' + key + '">املأ الهدف ' + num(tg.w) + '×' + tg.r + '</button>' : '') + '</div>';
+    }
+    if (rg) { let ch = ''; for (let r = rg.lo; r <= Math.min(rg.hi + 2, rg.lo + 9); r++) ch += '<button class="chip' + (nx.r === r ? ' blue' : '') + '" data-act="qr" data-key="' + key + '" data-v="' + r + '">' + r + '</button>'; h += '<div class="row small" style="gap:6px;flex-wrap:wrap;margin-top:6px"><span class="muted">تكرارات المجموعة التالية</span>' + ch + '</div>'; }
+    return h + '</div>';
+  }
   function exCard(se, wk, ex) {
     const key = wk + '.' + ex.id, slot = se.sets[key], last = L.lastPerf(S.sessions, slot.name, se.id);
     const full = slot.sets.every(x => x.done);
@@ -944,7 +993,7 @@ window.PROGRAM = {"workouts": {"A": {"nameAr": "التمرين A", "focus": "ج�
     return '<div class="ex' + (full ? ' complete' : '') + '" id="ex-' + key.replace('.', '-') + '">' +
       '<div class="row" style="align-items:flex-start"><div class="sp"><span class="tag">' + ex.superset + ex.id.slice(1) + '</span> ' + swapped + '<h3 style="margin-top:6px">' + esc(slot.nameAr) + '</h3><div class="en">' + esc(slot.name) + '</div></div></div>' +
       '<div class="chips"><span class="chip blue">' + ex.sets + ' مجموعات</span><span class="chip">' + esc(ex.reps) + ' تكرار</span></div>' +
-      '<div class="note">' + esc(slot.note || ex.note) + '</div>' + suggestion(ex, slot, last) +
+      '<div class="note">' + esc(slot.note || ex.note) + '</div>' + suggestion(ex, slot, last) + qbar(slot, key, ex, last) +
       '<div class="sets">' + rows + '</div>' +
       '<div class="exbar" style="margin-bottom:6px"><span class="restctl"><button data-act="rest-adj" data-key="' + key + '" data-d="-15" aria-label="أنقص الراحة">−</button><button class="go" data-act="rest-now" data-key="' + key + '">⏱ راحة ' + fmtT(restFor(wk, ex.id, slot.name)) + '</button><button data-act="rest-adj" data-key="' + key + '" data-d="15" aria-label="زد الراحة">+</button></span>' +
       '<button class="btn ghost sm" data-act="add-set" data-key="' + key + '">+ مجموعة</button>' + (slot.sets.length > 1 && !slot.sets[slot.sets.length - 1].done ? '<button class="btn ghost sm" data-act="del-set" data-key="' + key + '">− مجموعة</button>' : '') + '</div>' +
@@ -1259,6 +1308,7 @@ window.PROGRAM = {"workouts": {"A": {"nameAr": "التمرين A", "focus": "ج�
       '<div class="card"><h2>المظهر</h2><div class="seg">' + THEMES.map(m => '<button class="' + ((st.theme || 'auto') === m ? 'on' : '') + '" data-act="set-theme" data-m="' + m + '">' + THEME_AR[m] + '</button>').join('') + '</div><p class="small muted" style="margin:8px 0 0">تلقائي = يتبع إعداد جوالك.</p></div>' +
       '<div class="card"><h2>جدول الأسبوع</h2>' + sched + '</div>' +
       '<div class="card"><h2>أهدافك اليومية والأسبوعية</h2>' + [['steps', 'خطوات يومياً', 500, st.goals.steps], ['water', 'ماء يومياً (مل)', 250, st.goals.water], ['cardio', 'كارديو أسبوعياً (دقيقة)', 10, st.goals.cardio]].map(g => '<div class="row" style="margin:6px 0"><span>' + g[1] + '</span><div class="sp"></div><div class="stepper"><button data-act="goal-set" data-k="' + g[0] + '" data-d="-' + g[2] + '">−</button><b style="min-width:54px">' + g[3] + '</b><button data-act="goal-set" data-k="' + g[0] + '" data-d="' + g[2] + '">+</button></div></div>').join('') + '</div>' +
+      '<div class="card"><h2>طريقة التدرج</h2><div class="seg"><button class="' + (st.progression === 'double' ? '' : 'on') + '" data-act="prog-set" data-m="linear">خطي (الأسرع)</button><button class="' + (st.progression === 'double' ? 'on' : '') + '" data-act="prog-set" data-m="double">مزدوج (أبطأ)</button></div><p class="small muted" style="margin-bottom:0">ابدأ بالخطي (أول 2-4 أشهر): تزيد الوزن عندما تكون في منتصف نطاق التكرارات أو أعلى بجهد مريح. انتقل للمزدوج حين يتعثر التقدم: لا تزيد الوزن إلا بعد بلوغ أعلى النطاق في كل المجموعات.</p></div>' +
       '<div class="card"><h2>الراحة</h2><div class="row"><span>راحة بين التمارين</span><div class="sp"></div><div class="stepper"><button data-act="rest-set" data-d="-5">−</button><b style="min-width:44px">' + st.restSec + 'ث</b><button data-act="rest-set" data-d="5">+</button></div></div></div>' +
       '<div class="card"><h2>معداتك</h2><p class="small muted" style="margin-top:0">عدد الأقراص عندك من كل وزن (للحاسبة).</p>' + plateRows +
       '<div class="row" style="margin-top:10px"><span>وزن البار</span><div class="sp"></div><input id="barKg" class="field num" style="width:100px" inputmode="decimal" value="' + st.barKg + '"></div>' +
@@ -1530,6 +1580,12 @@ window.PROGRAM = {"workouts": {"A": {"nameAr": "التمرين A", "focus": "ج�
         UI.overlay = { type: 'video', id: t.dataset.v }; render(true); break;
       case 'deload-on': S.settings.deloadWeek = UI.viewWeek || currentWeek(); Store.saveSettings(); render(true); break;
       case 'deload-off': S.settings.deloadWeek = 0; Store.saveSettings(); render(true); break;
+      case 'prog-set': S.settings.progression = t.dataset.m === 'double' ? 'double' : 'linear'; Store.saveSettings(); render(true); break;
+      case 'qw': { const se = getSession(week, UI.wk), sl = se.sets[t.dataset.key], ex = exDef(se.wk, t.dataset.key.split('.')[1]), last = L.lastPerf(S.sessions, sl.name, se.id), tg = targetFor(ex, sl, last), nx = sl.sets.find(s => !s.done); if (!nx) break;
+        const base = nx.w != null ? nx.w : (tg && tg.w != null ? tg.w : (last && last.top ? last.top.w : 0)), nw = Math.max(0, Math.round((base + (+t.dataset.d)) * 4) / 4);
+        sl.sets.forEach(s => { if (!s.done) s.w = nw; }); Store.saveSession(se.id); render(true); break; }
+      case 'qr': { const se = getSession(week, UI.wk), sl = se.sets[t.dataset.key], nx = sl.sets.find(s => !s.done); if (nx) { nx.r = +t.dataset.v; Store.saveSession(se.id); render(true); } break; }
+      case 'qfill': { const se = getSession(week, UI.wk), sl = se.sets[t.dataset.key], ex = exDef(se.wk, t.dataset.key.split('.')[1]), tg = targetFor(ex, sl, L.lastPerf(S.sessions, sl.name, se.id)); if (tg) { sl.sets.forEach(s => { if (!s.done) { if (tg.w != null) s.w = tg.w; s.r = tg.r; } }); Store.saveSession(se.id); render(true); } break; }
       case 'close-overlay': UI.overlay = null; render(true); break;
       case 'finish': {
         const se = getSession(week, UI.wk), pr = slotProgress(se);
@@ -1585,6 +1641,7 @@ window.PROGRAM = {"workouts": {"A": {"nameAr": "التمرين A", "focus": "ج�
     if (t.id === 'warmW') { UI.warmW = t.value; document.getElementById('warmOut').innerHTML = warmOut(t.value); }
     else if (t.id === 'pcTotal') { UI.plateCalc.total = t.value; const d = document.createElement('div'); d.innerHTML = overlayPlates(); document.getElementById('pcOut').innerHTML = d.querySelector('#pcOut').innerHTML; }
   }
+  if ('serviceWorker' in navigator && location.protocol === 'https:' && window.top === window.self) window.addEventListener('load', () => { navigator.serviceWorker.register('sw.js').catch(() => {}); });
   app.addEventListener('click', onClick);
   app.addEventListener('change', onChange);
   app.addEventListener('input', onInput);
