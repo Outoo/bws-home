@@ -971,8 +971,6 @@ window.PROGRAM = {"workouts": {"A": {"nameAr": "التمرين A", "focus": "ج�
         (tg && tg.w ? '<button class="chip blue" data-act="qfill" data-key="' + key + '">املأ الهدف ' + num(tg.w) + '×' + tg.r + '</button>' : '') + '</div>';
     }
     if (rg) { let ch = ''; for (let r = rg.lo; r <= Math.min(rg.hi + 2, rg.lo + 9); r++) ch += '<button class="chip' + (nx.r === r ? ' blue' : '') + '" data-act="qr" data-key="' + key + '" data-v="' + r + '">' + r + '</button>'; h += '<div class="row small" style="gap:6px;flex-wrap:wrap;margin-top:6px"><span class="muted">تكرارات المجموعة التالية</span>' + ch + '</div>'; }
-    let eh = ''; [7, 8, 9, 10, 11].forEach(e => { eh += '<button class="chip' + (nx.e === e ? ' blue' : '') + '" data-act="qe" data-key="' + key + '" data-v="' + e + '">' + EFFORT[e] + ' ' + e + '</button>'; });
-    h += '<div class="row small" style="gap:6px;flex-wrap:wrap;margin-top:6px"><span class="muted">الجهد</span>' + eh + '</div>';
     return h + '</div>';
   }
   function exCard(se, wk, ex) {
@@ -1586,7 +1584,6 @@ window.PROGRAM = {"workouts": {"A": {"nameAr": "التمرين A", "focus": "ج�
       case 'qw': { const se = getSession(week, UI.wk), sl = se.sets[t.dataset.key], ex = exDef(se.wk, t.dataset.key.split('.')[1]), last = L.lastPerf(S.sessions, sl.name, se.id), tg = targetFor(ex, sl, last), nx = sl.sets.find(s => !s.done); if (!nx) break;
         const base = nx.w != null ? nx.w : (tg && tg.w != null ? tg.w : (last && last.top ? last.top.w : 0)), nw = Math.max(0, Math.round((base + (+t.dataset.d)) * 4) / 4);
         sl.sets.forEach(s => { if (!s.done) s.w = nw; }); Store.saveSession(se.id); render(true); break; }
-      case 'qe': { const se = getSession(week, UI.wk), sl = se.sets[t.dataset.key], nx = sl.sets.find(s => !s.done); if (nx) { const v = +t.dataset.v; nx.e = nx.e === v ? null : v; Store.saveSession(se.id); render(true); } break; }
       case 'qr': { const se = getSession(week, UI.wk), sl = se.sets[t.dataset.key], nx = sl.sets.find(s => !s.done); if (nx) { nx.r = +t.dataset.v; Store.saveSession(se.id); render(true); } break; }
       case 'qfill': { const se = getSession(week, UI.wk), sl = se.sets[t.dataset.key], ex = exDef(se.wk, t.dataset.key.split('.')[1]), tg = targetFor(ex, sl, L.lastPerf(S.sessions, sl.name, se.id)); if (tg) { sl.sets.forEach(s => { if (!s.done) { if (tg.w != null) s.w = tg.w; s.r = tg.r; } }); Store.saveSession(se.id); render(true); } break; }
       case 'close-overlay': UI.overlay = null; render(true); break;
